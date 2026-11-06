@@ -1,0 +1,40 @@
+# Zigbee2MQTT auto-recovery after a network coordinator outage.
+# Docs: https://github.com/danielrosehill/Zigbee2MQTT-Coordinator-Auto-Recovery
+#
+# Starts the Zigbee2MQTT add-on when its bridge has been offline for 2 minutes
+# and the coordinator is reachable. Checks when the coordinator returns and
+# every 5 minutes after that. Starting an add-on that is already running does
+# nothing, so a false trigger is harmless.
+#
+# To keep Zigbee2MQTT stopped on purpose (a coordinator firmware flash, say),
+# turn this automation off first, or it will start it again within 5 minutes.
+#
+# CHANGE THIS: replace binary_sensor.slzb_mr3u_ethernet (two places) with a
+# binary sensor that is "on" when your coordinator is reachable. See the README.
+
+automation:
+  - id: zigbee2mqtt_auto_recover
+    alias: Zigbee2MQTT — start again after coordinator outage
+    description: >-
+      Starts the Zigbee2MQTT add-on when its bridge has been offline for 2
+      minutes and the coordinator is reachable. Covers the case where the
+      Supervisor watchdog has used up its 10 restarts per 30 minutes.
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.slzb_mr3u_ethernet
+        to: "on"
+      - trigger: time_pattern
+        minutes: "/5"
+    conditions:
+      - condition: state
+        entity_id: binary_sensor.zigbee2mqtt_bridge_connection_state
+        state: "off"
+        for: "00:02:00"
+      - condition: state
+        entity_id: binary_sensor.slzb_mr3u_ethernet
+        state: "on"
+    actions:
+      - action: hassio.app_start
+        data:
+          app: 45df7312_zigbee2mqtt
