@@ -111,6 +111,7 @@ This is a workaround. The proper fix belongs upstream:
 
 - [Koenkk/zigbee2mqtt#33622](https://github.com/Koenkk/zigbee2mqtt/issues/33622): feature request to keep retrying network coordinators
 - [home-assistant/supervisor#7190](https://github.com/home-assistant/supervisor/issues/7190): the watchdog leaves apps stopped without telling anyone
+- [Koenkk/zigbee2mqtt#33692](https://github.com/Koenkk/zigbee2mqtt/issues/33692): feature request to retry the initial MQTT connection instead of exiting when the broker is late at boot
 
 Earlier reports: [#21921](https://github.com/Koenkk/zigbee2mqtt/issues/21921), [#29654](https://github.com/Koenkk/zigbee2mqtt/issues/29654), and [hassio-zigbee2mqtt#760](https://github.com/zigbee2mqtt/hassio-zigbee2mqtt/issues/760). A comment on #29654 suggested a similar automation based on the add-on's running sensor. This version adds the coordinator check, the periodic retry, and (v2) the combination of both sensors.
 
