@@ -1,36 +1,55 @@
-# Zigbee2MQTT auto-recovery after a network coordinator outage.
+# Zigbee2MQTT auto-recovery after a coordinator outage or a broker-boot race.
 # Docs: https://github.com/danielrosehill/Zigbee2MQTT-Coordinator-Auto-Recovery
 #
-# Starts the Zigbee2MQTT add-on when its bridge has been offline for 2 minutes
-# and the coordinator is reachable. Checks when the coordinator returns and
-# every 5 minutes after that. Starting an add-on that is already running does
-# nothing, so a false trigger is harmless.
+# Starts the Zigbee2MQTT add-on when it has been stopped for 2 minutes (or its
+# bridge has been offline for 2 minutes) and the coordinator is reachable.
+# Checks when the coordinator returns, when the add-on has been stopped for
+# 2 minutes, and every 2 minutes. Starting an add-on that is already running
+# does nothing, so a false trigger is harmless. If a dependency (the MQTT
+# broker, the coordinator) is still down, the start fails and the next check
+# tries again, so Z2M effectively waits for it.
+#
+# Why the add-on's running sensor and not only the bridge sensor: if Z2M never
+# reaches the MQTT broker (for example the host booted Z2M before the broker),
+# it never publishes its "offline" last will, so the retained "online" from
+# before the reboot keeps the bridge sensor ON while Z2M is dead.
 #
 # To keep Zigbee2MQTT stopped on purpose (a coordinator firmware flash, say),
-# turn this automation off first, or it will start it again within 5 minutes.
+# turn this automation off first, or it will start it again within 2 minutes.
 #
 # CHANGE THIS: replace binary_sensor.slzb_mr3u_ethernet (two places) with a
-# binary sensor that is "on" when your coordinator is reachable. See the README.
+# binary sensor that is "on" when your coordinator is reachable, and enable
+# binary_sensor.zigbee2mqtt_running (disabled by default). See the README.
 
 automation:
   - id: zigbee2mqtt_auto_recover
-    alias: Zigbee2MQTT — start again after coordinator outage
+    alias: Zigbee2MQTT — start again after coordinator or broker outage
     description: >-
-      Starts the Zigbee2MQTT add-on when its bridge has been offline for 2
-      minutes and the coordinator is reachable. Covers the case where the
-      Supervisor watchdog has used up its 10 restarts per 30 minutes.
+      Starts the Zigbee2MQTT add-on when it has been stopped, or its bridge
+      offline, for 2 minutes and the coordinator is reachable. Covers the case
+      where the Supervisor watchdog has used up its 10 restarts per 30 minutes.
     mode: single
     triggers:
       - trigger: state
         entity_id: binary_sensor.slzb_mr3u_ethernet
         to: "on"
-      - trigger: time_pattern
-        minutes: "/5"
-    conditions:
-      - condition: state
-        entity_id: binary_sensor.zigbee2mqtt_bridge_connection_state
-        state: "off"
+      - trigger: state
+        entity_id: binary_sensor.zigbee2mqtt_running
+        to: "off"
         for: "00:02:00"
+      - trigger: time_pattern
+        minutes: "/2"
+    conditions:
+      - condition: or
+        conditions:
+          - condition: state
+            entity_id: binary_sensor.zigbee2mqtt_running
+            state: "off"
+            for: "00:02:00"
+          - condition: state
+            entity_id: binary_sensor.zigbee2mqtt_bridge_connection_state
+            state: "off"
+            for: "00:02:00"
       - condition: state
         entity_id: binary_sensor.slzb_mr3u_ethernet
         state: "on"

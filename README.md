@@ -1,6 +1,6 @@
 # Zigbee2MQTT Coordinator Auto-Recovery
 
-A Home Assistant automation that brings Zigbee2MQTT (Z2M) back after a network coordinator outage, so you don't have to start the add-on by hand.
+A Home Assistant automation that brings Zigbee2MQTT (Z2M) back after a network coordinator outage, or after a reboot where Z2M started before its MQTT broker, so you don't have to start the add-on by hand.
 
 **You need this if** you run the Z2M add-on on Home Assistant OS with a network coordinator (`serial.port: tcp://...`, such as an SMLIGHT SLZB device), and Z2M stays stopped after the coordinator drops out and returns.
 
@@ -18,6 +18,12 @@ Anything that takes the coordinator away for more than about a minute can cause 
 
 The setting isn't configurable, and turning the watchdog off wouldn't help.
 
+### The same thing happens when the MQTT broker isn't up yet
+
+If your broker runs somewhere else (another host, a Docker container) and the machine reboots, Home Assistant can come up first. Z2M then logs `MQTT failed to connect, exiting... (connect ECONNREFUSED <broker>:1883)` and exits, the watchdog burns its 10 restarts, and the add-on sits in `error` long after the broker is up.
+
+This is also why the automation can't rely on the Z2M bridge sensor alone. The bridge state topic is retained. When Z2M stops cleanly or loses MQTT, it (or its last will) publishes `offline`. But if Z2M never connects to the broker at all, nothing publishes `offline`. The broker keeps the retained `online` from before the reboot, so the bridge sensor reads **on** while Z2M is dead. The first version of this automation was gated on that sensor alone, and on 2026-11-13 it sat through a 2-hour outage without firing.
+
 ### What about Z2M's own watchdog?
 
 Z2M has a [built-in watchdog](https://www.zigbee2mqtt.io/guide/installation/15_watchdog.html), set with the add-on's `watchdog` option, which retries without exiting. It is a reasonable alternative, with limits. The notes below come from its documentation and source, not from testing:
@@ -30,10 +36,10 @@ Z2M has a [built-in watchdog](https://www.zigbee2mqtt.io/guide/installation/15_w
 
 It starts the add-on when both of these are true:
 
-- the Z2M bridge has been offline for 2 minutes
+- the Z2M add-on has been stopped for 2 minutes (Supervisor's `binary_sensor.zigbee2mqtt_running`), **or** the Z2M bridge has been offline for 2 minutes
 - the coordinator is reachable
 
-It checks the moment the coordinator comes back, and every 5 minutes. The 5-minute check also covers Z2M being down after a reboot.
+It checks the moment the coordinator comes back, when the add-on has been stopped for 2 minutes, and every 2 minutes. If the broker or coordinator is still down, that start fails and the next check tries again, so Z2M effectively waits for its dependencies instead of giving up.
 
 The action is `hassio.app_start`, which does nothing if the add-on is already running, so a false trigger can't interrupt Zigbee.
 
@@ -58,6 +64,7 @@ You can also paste the part under `automation:` into the automation editor's YAM
 |---|---|---|
 | Coordinator reachable sensor | `binary_sensor.slzb_mr3u_ethernet` | **Must be changed** in both places. See below |
 | Z2M bridge sensor | `binary_sensor.zigbee2mqtt_bridge_connection_state` | Check it exists. This is the default name |
+| Z2M add-on running sensor | `binary_sensor.zigbee2mqtt_running` | **Must be enabled.** The Supervisor integration creates it disabled. Enable it under **Settings > Devices & services > Entities** (search "Zigbee2MQTT running") |
 | Add-on slug | `45df7312_zigbee2mqtt` | The edge add-on has a different slug. Check the add-on's URL |
 
 For the coordinator sensor:
@@ -84,7 +91,9 @@ Tested on 2026-11-06 with Z2M 2.14.3-1, Home Assistant Core 2026.10.2, HAOS 18.3
 | 15:25:00 | Automation fires on its 5-minute check |
 | 15:25:04 | `Zigbee2MQTT started!`, all 24 devices joined |
 
-**Not yet tested:** the trigger that fires the moment the coordinator returns, because the automation was off at that point. If it didn't work, the 5-minute check would still catch it.
+**Not yet tested:** the trigger that fires the moment the coordinator returns, because the automation was off at that point. If it didn't work, the periodic check would still catch it.
+
+**2026-11-13 update (v2, broker race):** a host reboot started Z2M before the external Mosquitto broker; Z2M exited with `ECONNREFUSED`, stayed in `error` for about 2 hours, and the v1 automation didn't fire because the retained bridge state still said `online`. v2 adds the running-sensor gate and trigger and shortens the check to every 2 minutes. Verified so far: with Z2M running, triggering the automation with conditions does nothing. Not yet tested against a real reboot.
 
 To test yours, unplug the coordinator for 3 minutes, plug it back in, and check that Z2M returns within about 5 minutes. Zigbee is down throughout.
 
@@ -92,9 +101,9 @@ Logs and the full timeline are in the [original bug report](https://github.com/d
 
 ## Things to know
 
-- **Stopping Z2M on purpose:** turn this automation off first, or it will start Z2M again within 5 minutes. This matters for coordinator firmware flashes.
-- **Other causes of failure:** if Z2M won't start for another reason, such as a bad configuration, the automation retries every 5 minutes without fixing anything. That's harmless, but it won't tell you. Add a notification if you want one.
-- **Broker outages:** the automation won't help if the Z2M bridge sensor is `unavailable`, for instance when Home Assistant has lost MQTT.
+- **Stopping Z2M on purpose:** turn this automation off first, or it will start Z2M again within 2 minutes. This matters for coordinator firmware flashes.
+- **Other causes of failure:** if Z2M won't start for another reason, such as a bad configuration, the automation retries every 2 minutes without fixing anything. That's harmless, but it won't tell you. Add a notification if you want one.
+- **Broker outages:** covered from v2 through the running sensor. If Home Assistant itself has lost MQTT the bridge sensor goes `unavailable`, but the running sensor comes from the Supervisor, not MQTT, so the add-on is still restarted once it has stopped.
 
 ## Upstream status
 
@@ -103,7 +112,7 @@ This is a workaround. The proper fix belongs upstream:
 - [Koenkk/zigbee2mqtt#33622](https://github.com/Koenkk/zigbee2mqtt/issues/33622): feature request to keep retrying network coordinators
 - [home-assistant/supervisor#7190](https://github.com/home-assistant/supervisor/issues/7190): the watchdog leaves apps stopped without telling anyone
 
-Earlier reports: [#21921](https://github.com/Koenkk/zigbee2mqtt/issues/21921), [#29654](https://github.com/Koenkk/zigbee2mqtt/issues/29654), and [hassio-zigbee2mqtt#760](https://github.com/zigbee2mqtt/hassio-zigbee2mqtt/issues/760). A comment on #29654 suggested a similar automation based on the add-on's running sensor. This version adds the coordinator check and the periodic retry.
+Earlier reports: [#21921](https://github.com/Koenkk/zigbee2mqtt/issues/21921), [#29654](https://github.com/Koenkk/zigbee2mqtt/issues/29654), and [hassio-zigbee2mqtt#760](https://github.com/zigbee2mqtt/hassio-zigbee2mqtt/issues/760). A comment on #29654 suggested a similar automation based on the add-on's running sensor. This version adds the coordinator check, the periodic retry, and (v2) the combination of both sensors.
 
 ## License
 
